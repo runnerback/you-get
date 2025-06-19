@@ -20,6 +20,30 @@ from .util import log, term
 from .util.git import get_version
 from .util.strings import get_filename, unescape_html
 from . import json_output as json_output_
+try:
+    from .util.kuaidaili_proxy import get_kuaidaili_proxy_url, get_kuaidaili_proxy_instance
+except ImportError:
+    # 如果快代理模块导入失败，提供默认的空函数
+    def get_kuaidaili_proxy_url():
+        return None
+    def get_kuaidaili_proxy_instance():
+        return None
+
+try:
+    from .util.download_timeout import (
+        get_timeout_manager, get_retry_manager,
+        DownloadTimeoutError, DownloadStallError
+    )
+except ImportError:
+    # 如果超时管理模块导入失败，提供默认的空实现
+    class DownloadTimeoutError(Exception):
+        pass
+    class DownloadStallError(Exception):
+        pass
+    def get_timeout_manager():
+        return None
+    def get_retry_manager():
+        return None
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer,encoding='utf8')
 
 SITES = {
@@ -671,6 +695,9 @@ def url_save(
     url, filepath, bar, refer=None, is_part=False, faker=False,
     headers=None, timeout=None, **kwargs
 ):
+    """
+    增强的文件下载函数，支持超时管理和重试机制
+    """
     tmp_headers = headers.copy() if headers is not None else {}
     # When a referer specified with param refer,
     # the key must be 'Referer' for the hack here
@@ -832,6 +859,245 @@ def url_save(
     if os.access(filepath, os.W_OK) and file_size != float('inf'):
         # on Windows rename could fail if destination filepath exists
         # we should simply choose a new name instead of brutal os.remove(filepath)
+        filepath = filepath + " (2)"
+    os.rename(temp_filepath, filepath)
+
+
+def url_save_with_timeout(
+    url, filepath, bar, refer=None, is_part=False, faker=False,
+    headers=None, timeout=None, platform="default", **kwargs
+):
+    """
+    带超时管理的文件下载函数
+    """
+    # 检查是否禁用了超时管理
+    args = kwargs.get('args')
+    if args and hasattr(args, 'disable_timeout_management') and args.disable_timeout_management:
+        # 用户明确禁用超时管理，使用原始函数
+        return url_save(url, filepath, bar, refer, is_part, faker, headers, timeout, **kwargs)
+    
+    # 获取超时管理器
+    timeout_manager = get_timeout_manager()
+    if timeout_manager is None:
+        # 如果超时管理器不可用，退回到原始函数
+        return url_save(url, filepath, bar, refer, is_part, faker, headers, timeout, **kwargs)
+    
+    # 检测平台
+    if 'bilibili.com' in str(url):
+        platform = "bilibili"
+    elif 'youtube.com' in str(url) or 'youtu.be' in str(url):
+        platform = "youtube"
+    
+    def _download_with_timeout():
+        tmp_headers = headers.copy() if headers is not None else {}
+        if refer is not None:
+            tmp_headers['Referer'] = refer
+            
+        if type(url) is list:
+            chunk_sizes = [url_size(u, faker=faker, headers=tmp_headers) for u in url]
+            file_size = sum(chunk_sizes)
+            urls_list = url
+        else:
+            file_size = url_size(url, faker=faker, headers=tmp_headers)
+            urls_list = [url]
+        
+        # 启动超时管理
+        if file_size and file_size != float('inf'):
+            timeout_manager.start_download(file_size, platform)
+        
+        try:
+            # 执行原始下载逻辑，但添加进度回调
+            _url_save_with_progress_callback(
+                url, filepath, bar, refer, is_part, faker, 
+                headers, timeout, timeout_manager, **kwargs
+            )
+        finally:
+            # 停止超时管理
+            timeout_manager.stop_download()
+    
+    # 获取重试管理器并执行下载
+    retry_manager = get_retry_manager()
+    if retry_manager:
+        return retry_manager.download_with_retry(_download_with_timeout)
+    else:
+        return _download_with_timeout()
+
+
+def _url_save_with_progress_callback(
+    url, filepath, bar, refer=None, is_part=False, faker=False,
+    headers=None, timeout=None, timeout_manager=None, **kwargs
+):
+    """
+    带进度回调的下载函数（内部使用）
+    """
+    tmp_headers = headers.copy() if headers is not None else {}
+    if refer is not None:
+        tmp_headers['Referer'] = refer
+        
+    if type(url) is list:
+        chunk_sizes = [url_size(u, faker=faker, headers=tmp_headers) for u in url]
+        file_size = sum(chunk_sizes)
+        is_chunked, urls = True, url
+    else:
+        file_size = url_size(url, faker=faker, headers=tmp_headers)
+        chunk_sizes = [file_size]
+        is_chunked, urls = False, [url]
+
+    continue_renameing = True
+    while continue_renameing:
+        continue_renameing = False
+        if os.path.exists(filepath):
+            if not force and (file_size == os.path.getsize(filepath) or skip_existing_file_size_check):
+                if not is_part:
+                    if bar:
+                        bar.done()
+                    if skip_existing_file_size_check:
+                        log.w(
+                            'Skipping {} without checking size: file already exists'.format(
+                                tr(os.path.basename(filepath))
+                            )
+                        )
+                    else:
+                        log.w(
+                            'Skipping {}: file already exists'.format(
+                                tr(os.path.basename(filepath))
+                            )
+                        )
+                else:
+                    if bar:
+                        bar.update_received(file_size)
+                return
+            else:
+                if not is_part:
+                    if bar:
+                        bar.done()
+                    if not force and auto_rename:
+                        path, ext = os.path.basename(filepath).rsplit('.', 1)
+                        finder = re.compile(r' \([1-9]\d*?\)$')
+                        if (finder.search(path) is None):
+                            thisfile = path + ' (1).' + ext
+                        else:
+                            def numreturn(a):
+                                return ' (' + str(int(a.group()[2:-1]) + 1) + ').'
+                            thisfile = finder.sub(numreturn, path) + ext
+                        filepath = os.path.join(os.path.dirname(filepath), thisfile)
+                        print('Changing name to %s' % tr(os.path.basename(filepath)), '...')
+                        continue_renameing = True
+                        continue
+                    if log.yes_or_no('File with this name already exists. Overwrite?'):
+                        log.w('Overwriting %s ...' % tr(os.path.basename(filepath)))
+                    else:
+                        return
+        elif not os.path.exists(os.path.dirname(filepath)):
+            os.mkdir(os.path.dirname(filepath))
+
+    temp_filepath = filepath + '.download' if file_size != float('inf') else filepath
+    received = 0
+    if not force:
+        open_mode = 'ab'
+        if os.path.exists(temp_filepath):
+            received += os.path.getsize(temp_filepath)
+            if bar:
+                bar.update_received(os.path.getsize(temp_filepath))
+            # 更新超时管理器的进度
+            if timeout_manager:
+                timeout_manager.update_progress(received)
+    else:
+        open_mode = 'wb'
+
+    chunk_start = 0
+    chunk_end = 0
+    for i, url in enumerate(urls):
+        received_chunk = 0
+        chunk_start += 0 if i == 0 else chunk_sizes[i - 1]
+        chunk_end += chunk_sizes[i]
+        if received < file_size and received < chunk_end:
+            if faker:
+                tmp_headers = fake_headers
+            
+            if received:
+                tmp_headers['Range'] = 'bytes=' + str(received - chunk_start) + '-'
+            if refer:
+                tmp_headers['Referer'] = refer
+
+            if timeout:
+                response = urlopen_with_retry(
+                    request.Request(url, headers=tmp_headers), timeout=timeout
+                )
+            else:
+                response = urlopen_with_retry(
+                    request.Request(url, headers=tmp_headers)
+                )
+            try:
+                range_start = int(
+                    response.headers['content-range'][6:].split('/')[0].split('-')[0]
+                )
+                end_length = int(
+                    response.headers['content-range'][6:].split('/')[1]
+                )
+                range_length = end_length - range_start
+            except:
+                content_length = response.headers['content-length']
+                range_length = int(content_length) if content_length is not None else float('inf')
+
+            if is_chunked:
+                open_mode = 'ab'
+            elif file_size != received + range_length:
+                received = 0
+                if bar:
+                    bar.received = 0
+                if timeout_manager:
+                    timeout_manager.update_progress(0)
+                open_mode = 'wb'
+
+            with open(temp_filepath, open_mode) as output:
+                last_progress_update = time.time()
+                while True:
+                    buffer = None
+                    try:
+                        # 检查超时管理器状态
+                        if timeout_manager and not timeout_manager.is_timeout_active:
+                            raise DownloadTimeoutError("下载被超时管理器终止")
+                            
+                        buffer = response.read(1024 * 256)
+                    except socket.timeout:
+                        log.w("[超时管理] Socket超时，继续重试...")
+                        pass
+                    except (DownloadTimeoutError, DownloadStallError) as e:
+                        log.e(f"[超时管理] {e}")
+                        raise
+                    
+                    if not buffer:
+                        if file_size == float('+inf'):
+                            break
+                        if is_chunked and received_chunk == range_length:
+                            break
+                        elif not is_chunked and received == file_size:
+                            break
+                        # 网络中断，重新请求
+                        tmp_headers['Range'] = 'bytes=' + str(received - chunk_start) + '-'
+                        response = urlopen_with_retry(
+                            request.Request(url, headers=tmp_headers)
+                        )
+                        continue
+                    
+                    output.write(buffer)
+                    received += len(buffer)
+                    received_chunk += len(buffer)
+                    if bar:
+                        bar.update_received(len(buffer))
+                    
+                    # 定期更新超时管理器的进度（避免过于频繁的调用）
+                    current_time = time.time()
+                    if timeout_manager and current_time - last_progress_update > 1.0:
+                        timeout_manager.update_progress(received)
+                        last_progress_update = current_time
+
+    assert received == os.path.getsize(temp_filepath), '%s == %s == %s' % (
+        received, os.path.getsize(temp_filepath), temp_filepath
+    )
+
+    if os.access(filepath, os.W_OK) and file_size != float('inf'):
         filepath = filepath + " (2)"
     os.rename(temp_filepath, filepath)
 
@@ -1042,7 +1308,8 @@ def download_urls(
         url = urls[0]
         print('Downloading %s ...' % tr(output_filename))
         bar.update()
-        url_save(
+        # 使用带超时管理的下载函数
+        url_save_with_timeout(
             url, output_filepath, bar, refer=refer, faker=faker,
             headers=headers, **kwargs
         )
@@ -1057,7 +1324,8 @@ def download_urls(
             parts.append(output_filepath_i)
             # print 'Downloading %s [%s/%s]...' % (tr(filename), i + 1, len(urls))
             bar.update_piece(i + 1)
-            url_save(
+            # 使用带超时管理的下载函数
+            url_save_with_timeout(
                 url, output_filepath_i, bar, refer=refer, is_part=True, faker=faker,
                 headers=headers, **kwargs
             )
@@ -1352,6 +1620,58 @@ def set_http_proxy(proxy):
         )
     opener = request.build_opener(proxy_support)
     request.install_opener(opener)
+
+def set_kuaidaili_proxy():
+    """
+    设置快代理IP代理
+    """
+    try:
+        proxy_url = get_kuaidaili_proxy_url()
+        if proxy_url:
+            log.i(f'[快代理] 正在使用快代理IP: {proxy_url}')
+            # 解析代理URL格式: http://username:password@ip:port
+            import re
+            match = re.match(r'http://(.+?)@(.+):(\d+)', proxy_url)
+            if match:
+                auth_part = match.group(1)
+                ip = match.group(2)
+                port = match.group(3)
+                proxy_addr = f"{ip}:{port}"
+                
+                # 设置代理
+                proxy_support = request.ProxyHandler({
+                    'http': proxy_url,
+                    'https': proxy_url
+                })
+                opener = request.build_opener(proxy_support)
+                request.install_opener(opener)
+                log.i(f'[快代理] 快代理设置成功: {proxy_addr}')
+                return True
+            else:
+                # 没有认证信息的代理格式: http://ip:port
+                match = re.match(r'http://(.+):(\d+)', proxy_url)
+                if match:
+                    ip = match.group(1)
+                    port = match.group(2)
+                    proxy_addr = f"{ip}:{port}"
+                    
+                    proxy_support = request.ProxyHandler({
+                        'http': proxy_url,
+                        'https': proxy_url
+                    })
+                    opener = request.build_opener(proxy_support)
+                    request.install_opener(opener)
+                    log.i(f'[快代理] 快代理设置成功: {proxy_addr}')
+                    return True
+                else:
+                    log.e('[快代理] 快代理URL格式错误')
+                    return False
+        else:
+            log.e('[快代理] 获取快代理IP失败')
+            return False
+    except Exception as e:
+        log.e(f'[快代理] 设置快代理时发生错误: {e}')
+        return False
 
 
 def print_more_compatible(*args, **kwargs):
@@ -1665,6 +1985,23 @@ def script_main(download, download_playlist, **kwargs):
         '-s', '--socks-proxy', metavar='HOST:PORT or USERNAME:PASSWORD@HOST:PORT',
         help='Use an SOCKS5 proxy for downloading'
     )
+    proxy_grp.add_argument(
+        '--kuaidaili-proxy', action='store_true', default=True,
+        help='Use Kuaidaili proxy service for downloading (enabled by default)'
+    )
+    proxy_grp.add_argument(
+        '--disable-kuaidaili-proxy', action='store_true',
+        help='Disable Kuaidaili proxy service'
+    )
+
+    download_grp.add_argument(
+        '--enable-timeout-management', action='store_true', default=True,
+        help='Enable download timeout management and retry (enabled by default)'
+    )
+    download_grp.add_argument(
+        '--disable-timeout-management', action='store_true',
+        help='Disable download timeout management and retry'
+    )
 
     download_grp.add_argument('--stream', help=argparse.SUPPRESS)
     download_grp.add_argument('--itag', help=argparse.SUPPRESS)
@@ -1742,6 +2079,14 @@ def script_main(download, download_playlist, **kwargs):
 
     if args.no_proxy:
         set_http_proxy('')
+    elif args.disable_kuaidaili_proxy:
+        # 用户明确禁用快代理
+        set_http_proxy(args.http_proxy)
+    elif args.kuaidaili_proxy and not args.http_proxy and not args.socks_proxy:
+        # 默认使用快代理（除非用户指定了其他代理）
+        if not set_kuaidaili_proxy():
+            log.w('[快代理] 快代理设置失败，降级使用默认网络')
+            set_http_proxy(args.http_proxy)
     else:
         set_http_proxy(args.http_proxy)
     if args.socks_proxy:
