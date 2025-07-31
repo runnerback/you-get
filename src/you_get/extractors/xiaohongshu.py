@@ -12,6 +12,9 @@ class Xiaohongshu(VideoExtractor):
     ]
     
     def prepare(self, **kwargs):
+        # 声明 global 变量
+        global fake_headers
+        
         # 小红书不能使用代理，需要临时禁用
         import os
         original_http_proxy = os.environ.get('http_proxy')
@@ -23,35 +26,44 @@ class Xiaohongshu(VideoExtractor):
         if 'https_proxy' in os.environ:
             del os.environ['https_proxy']
         
-        # 处理小红书CDN图片直链
-        if re.search(r'(sns-webpic-qc|sns-img-qc|sns-img-hw|sns-img-bd|sns-img-qn)\.xhscdn\.com', self.url):
+        # 处理小红书CDN图片和视频直链
+        if re.search(r'(sns-webpic-qc|sns-img-qc|sns-img-hw|sns-img-bd|sns-img-qn|sns-video-bd|sns-video-qc|sns-video-hw|sns-video-qn)\.xhscdn\.com', self.url):
             # 确保使用 https 协议
             if self.url.startswith('http://'):
                 self.url = self.url.replace('http://', 'https://', 1)
             
-            # 从URL中提取文件扩展名
-            # 处理类似 !nd_dft_wlteh_jpg_3 这样的后缀
-            container = 'jpg'  # 默认格式
-            if '!nd_dft_wlteh_jpg' in self.url:
-                container = 'jpg'
-            elif '!nd_dft_wlteh_png' in self.url:
-                container = 'png'
-            elif '!nd_dft_wlteh_webp' in self.url:
-                container = 'webp'
-            elif '.jpg' in self.url:
-                container = 'jpg'
-            elif '.png' in self.url:
-                container = 'png'
-            elif '.webp' in self.url:
-                container = 'webp'
+            # 判断是视频还是图片
+            is_video = 'sns-video' in self.url
+            
+            if is_video:
+                # 视频默认格式为 mp4
+                container = 'mp4'
+                # 设置视频请求头
+                fake_headers['Accept'] = 'video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5'
+            else:
+                # 从URL中提取文件扩展名
+                # 处理类似 !nd_dft_wlteh_jpg_3 这样的后缀
+                container = 'jpg'  # 默认格式
+                if '!nd_dft_wlteh_jpg' in self.url:
+                    container = 'jpg'
+                elif '!nd_dft_wlteh_png' in self.url:
+                    container = 'png'
+                elif '!nd_dft_wlteh_webp' in self.url:
+                    container = 'webp'
+                elif '.jpg' in self.url:
+                    container = 'jpg'
+                elif '.png' in self.url:
+                    container = 'png'
+                elif '.webp' in self.url:
+                    container = 'webp'
+                # 设置图片请求头
+                fake_headers['Accept'] = 'image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
             
             # 设置必要的请求头，模拟从小红书网站访问
             self.referer = 'https://www.xiaohongshu.com/'
             
             # 修改全局 fake_headers 以支持小红书
-            global fake_headers
             fake_headers['Referer'] = self.referer
-            fake_headers['Accept'] = 'image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
             fake_headers['Accept-Language'] = 'zh-CN,zh;q=0.9,en;q=0.8'
             fake_headers['Cache-Control'] = 'no-cache'
             fake_headers['Pragma'] = 'no-cache'
@@ -73,11 +85,20 @@ class Xiaohongshu(VideoExtractor):
             
             # 从URL中提取标题
             # 尝试从路径中获取有意义的名称
-            match = re.search(r'/([a-zA-Z0-9]+)(?:!|\.)', self.url)
-            if match:
-                self.title = match.group(1)
+            if is_video:
+                # 视频URL格式：.../1040g00g31hp86o2ujil05n0qvba1br4f8mog4m0
+                match = re.search(r'/([a-zA-Z0-9]+)$', self.url)
+                if match:
+                    self.title = match.group(1)
+                else:
+                    self.title = 'xiaohongshu_video'
             else:
-                self.title = 'xiaohongshu_image'
+                # 图片URL格式：.../xxx!nd_dft_wlteh_jpg_3
+                match = re.search(r'/([a-zA-Z0-9]+)(?:!|\.)', self.url)
+                if match:
+                    self.title = match.group(1)
+                else:
+                    self.title = 'xiaohongshu_image'
                 
         # 处理小红书笔记页面URL
         elif re.search(r'xiaohongshu\.com/explore/|xiaohongshu\.com/discovery/item/', self.url):
