@@ -27,6 +27,7 @@ var/
 *.egg-info/
 .installed.cfg
 *.egg
+**/.env
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -84,7 +85,6 @@ _*
 *.webm
 *.xml
 *.json
-/.env
 /.idea
 *.m4a
 *.DS_Store
