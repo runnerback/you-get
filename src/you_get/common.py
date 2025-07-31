@@ -137,6 +137,8 @@ SITES = {
     'veoh'             : 'veoh',
     'vk'               : 'vk',
     'x'                : 'twitter',
+    'xiaohongshu'      : 'xiaohongshu',
+    'xhscdn'           : 'xiaohongshu',
     'xiaokaxiu'        : 'yixia',
     'xiaojiadianvideo' : 'fc2video',
     'ximalaya'         : 'ximalaya',
@@ -2103,7 +2105,15 @@ def script_main(download, download_playlist, **kwargs):
             sys.exit(2)
         URLs.extend(args.input_file.read().splitlines())
         args.input_file.close()
-    URLs.extend(args.URL)
+    # 处理输入的URL，支持逗号分隔的多个URL
+    for url_arg in args.URL:
+        # 检查是否包含逗号分隔的多个URL
+        if ',' in url_arg:
+            # 分割URL并去除空格
+            split_urls = [u.strip() for u in url_arg.split(',') if u.strip()]
+            URLs.extend(split_urls)
+        else:
+            URLs.append(url_arg)
 
     if not URLs:
         parser.print_help()

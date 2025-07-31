@@ -77,6 +77,7 @@ from .vimeo import *
 from .vk import *
 from .w56 import *
 from .wanmen import *
+from .xiaohongshu import *
 from .xinpianchang import *
 from .yixia import *
 from .youku import *
