@@ -3,6 +3,8 @@
 from ..common import *
 from ..extractor import VideoExtractor
 import re
+import os
+import logging
 
 class Xiaohongshu(VideoExtractor):
     name = "小红书 (Xiaohongshu)"
@@ -125,9 +127,8 @@ class Xiaohongshu(VideoExtractor):
                     _, s['container'], s['size'] = url_info(s['src'][0], faker=True)
     
     def download(self, **kwargs):
-        """重写下载方法以传递正确的请求头"""
+        """重写下载方法以传递正确的请求头并支持视频压缩"""
         # 小红书下载时也需要禁用代理
-        import os
         original_http_proxy = os.environ.get('http_proxy')
         original_https_proxy = os.environ.get('https_proxy')
         
@@ -143,9 +144,16 @@ class Xiaohongshu(VideoExtractor):
             if hasattr(self, 'referer'):
                 fake_headers['Referer'] = self.referer
             
+            # 获取输出目录
+            output_dir = kwargs.get('output_dir', '.')
+            
             # 为每个流下载
             for stream_id in self.streams:
                 stream = self.streams[stream_id]
+                
+                # 检查是否是视频
+                is_video = stream['container'] in ['mp4', 'flv', 'avi', 'mov', 'mkv']
+                
                 # 使用 faker=True 来确保使用我们的 fake_headers
                 download_urls(
                     stream['src'], 
@@ -155,6 +163,46 @@ class Xiaohongshu(VideoExtractor):
                     faker=True,  # 这个很重要！
                     **kwargs
                 )
+                
+                # 如果是视频，进行压缩
+                if is_video:
+                    try:
+                        # 构建下载后的文件路径
+                        from ..common import get_output_filename
+                        output_filename = get_output_filename(
+                            stream['src'], 
+                            self.title, 
+                            stream['container'], 
+                            output_dir, 
+                            merge=True
+                        )
+                        video_path = os.path.join(output_dir, output_filename)
+                        
+                        # 检查文件是否存在
+                        if os.path.exists(video_path):
+                            # 导入视频压缩工具
+                            from ..util.video_compressor import compress_xiaohongshu_video
+                            
+                            # 定义状态回调函数
+                            def status_callback(status):
+                                if status == "compacting":
+                                    print('Compressing video...')
+                                elif status == "完成":
+                                    print('Video compression completed!')
+                            
+                            # 压缩视频
+                            compressed_path = compress_xiaohongshu_video(video_path, status_callback)
+                            
+                            if compressed_path:
+                                # 获取压缩后的文件名
+                                compressed_filename = os.path.basename(compressed_path)
+                                print(f'Video successfully compressed: {compressed_filename}')
+                            else:
+                                print('Video compression failed, keeping original file')
+                    except Exception as e:
+                        logging.error(f'Error during video compression: {e}')
+                        print(f'Warning: Video compression failed - {e}')
+                        
         finally:
             # 恢复原始代理设置
             if original_http_proxy:
