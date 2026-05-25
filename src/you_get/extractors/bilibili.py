@@ -2,6 +2,7 @@
 
 from ..common import *
 from ..extractor import VideoExtractor
+from .bilibili_subtitle import fetch_subtitles
 
 import hashlib
 import math
@@ -336,6 +337,8 @@ class Bilibili(VideoExtractor):
 
             # get danmaku
             self.danmaku = get_content('https://comment.bilibili.com/%s.xml' % cid, headers=self.bilibili_headers(referer=self.url))
+            # get subtitles (via SignSrv)
+            fetch_subtitles(self, avid, cid)
 
         # bangumi
         elif sort == 'bangumi':
@@ -415,6 +418,8 @@ class Bilibili(VideoExtractor):
 
             # get danmaku
             self.danmaku = get_content('https://comment.bilibili.com/%s.xml' % cid, headers=self.bilibili_headers(referer=self.url))
+            # get subtitles (via SignSrv)
+            fetch_subtitles(self, avid, cid)
 
         # vc video
         elif sort == 'vc':
@@ -597,6 +602,8 @@ class Bilibili(VideoExtractor):
 
         # get danmaku
         self.danmaku = get_content('https://comment.bilibili.com/%s.xml' % cid, headers=self.bilibili_headers(referer=self.url))
+        # get subtitles (via SignSrv)
+        fetch_subtitles(self, avid, cid)
 
     def extract(self, **kwargs):
         # set UA and referer for downloading
