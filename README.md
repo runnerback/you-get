@@ -29,7 +29,7 @@
 
 | 能力 | 状态 | 说明 |
 |---|---|---|
-| 代理（共享代理池） | ✅ v1.2 重构 | **快代理具体实现已彻底移除**，统一由 `MediaCrawlerPro-Python` 资源服务提供 `GET /api/v1/proxy/kuaidaili`。默认启用；`--disable-srv-proxy` 关闭。旧参数 `--disable-kuaidaili-proxy` 作为别名保留 |
+| 代理（共享代理池） | ✅ v1.2 重构 | **快代理具体实现已彻底移除**，统一由 `MediaCrawlerPro-Python` 资源服务提供 `GET /api/v1/proxy/kuaidaili`。默认启用；`--disable-srv-proxy` 关闭。旧参数 `--disable-srv-proxy` 作为别名保留 |
 | Bilibili 音视频分流下载 | ✅ 原生支持 | 用上游已有的 `-n / --no-merge`，产物为 `{title}[00].mp4`（视频）+ `{title}[01].mp4`（音频） |
 | **Bilibili CC 字幕下载（含 AI）** | ✅ 本 fork 新增 | 需 `MediaCrawlerPro-SignSrv` 提供 wbi 签名；详见 §四 |
 | Cookies 自动从资源服务拉取 | ✅ 本 fork 新增 | 未传 `--cookies` 时自动调 `MediaCrawlerPro-Python` 资源服务 `GET /api/v1/bili/cookies` |
@@ -64,12 +64,12 @@ pip install -r requirements.txt
 
 ### 查看可用清晰度
 ```bash
-./you-get --disable-kuaidaili-proxy -i https://www.bilibili.com/video/BVxxxxxx/
+./you-get --disable-srv-proxy -i https://www.bilibili.com/video/BVxxxxxx/
 ```
 
 ### 默认下载（合并为单个 mp4）
 ```bash
-./you-get --disable-kuaidaili-proxy --cookies ~/bili_cookies.txt \
+./you-get --disable-srv-proxy --cookies ~/bili_cookies.txt \
   --format=dash-flv720-AVC \
   https://www.bilibili.com/video/BVxxxxxx/
 ```
@@ -91,7 +91,7 @@ pip install -r requirements.txt
 |---|---|
 | 资源服务返回代理 | log 输出 `[Proxy] 使用资源服务代理: http://...`，注入 urllib |
 | 资源服务返回 500 / 不可达 / 端点 KDL 凭证未配 | `[Proxy] 资源服务未返回可用代理` → 降级直连，不阻塞下载 |
-| 显式禁用 | `--disable-srv-proxy`（旧别名 `--disable-kuaidaili-proxy` 仍可用） |
+| 显式禁用 | `--disable-srv-proxy`（旧别名 `--disable-srv-proxy` 仍可用） |
 | 自传代理 | `--http-proxy HOST:PORT` 或 `-s/--socks-proxy HOST:PORT` 优先级最高 |
 
 资源服务端的 KDL 凭证在 `MediaCrawlerPro-Python/.env` 配置：
@@ -127,10 +127,10 @@ venv/bin/python serve.py    # 监听 8990
 
 ```bash
 # 零配置（用 DB cookies + 自动签名）
-./you-get --disable-kuaidaili-proxy -n https://www.bilibili.com/video/BVxxxxxx/
+./you-get --disable-srv-proxy -n https://www.bilibili.com/video/BVxxxxxx/
 
 # 显式传 cookies（覆盖 DB cookies）
-./you-get --disable-kuaidaili-proxy --cookies ~/bili_cookies.txt \
+./you-get --disable-srv-proxy --cookies ~/bili_cookies.txt \
   -n https://www.bilibili.com/video/BVxxxxxx/
 ```
 
@@ -181,7 +181,7 @@ RESOURCE_SRV_URL=http://127.0.0.1:8990
 
 最小命令：
 ```bash
-./you-get --disable-kuaidaili-proxy -n https://www.bilibili.com/video/BVxxxxxx/
+./you-get --disable-srv-proxy -n https://www.bilibili.com/video/BVxxxxxx/
 ```
 
 产物：
