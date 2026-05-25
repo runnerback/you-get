@@ -3,6 +3,7 @@
 from ..common import *
 from ..extractor import VideoExtractor
 from .bilibili_subtitle import fetch_subtitles
+from ..util.cookies_srv_client import inject_global_cookies
 
 import hashlib
 import math
@@ -156,6 +157,10 @@ class Bilibili(VideoExtractor):
         self.streams.clear()
         self.dash_streams.clear()
 
+        # 用户未传 --cookies 时，从 MediaCrawlerPro-Python 资源服务自动注入 bili cookies
+        # 注入到全局 you_get.common.cookies，让上游清晰度解析、字幕请求等都能用上
+        inject_global_cookies("bili")
+
         try:
             html_content = get_content(self.url, headers=self.bilibili_headers(referer=self.url))
         except:
@@ -226,8 +231,9 @@ class Bilibili(VideoExtractor):
             if 'videoData' in initial_state:
                 # (standard video)
 
-                # warn if cookies are not loaded
-                if cookies is None:
+                # warn if cookies are not loaded（读 common 模块最新值，避免 import * 快照问题）
+                from .. import common as _common
+                if _common.cookies is None:
                     log.w('You will need login cookies for 720p formats or above. (use --cookies to load cookies.txt.)')
 
                 # warn if it is a multi-part video

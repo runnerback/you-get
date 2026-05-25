@@ -17,7 +17,6 @@ from ..util.signsrv_client import (
     call_bilibili_sign,
     DEFAULT_SIGN_SRV_URL,
 )
-from ..util.cookies_srv_client import fetch_cookies as fetch_cookies_from_srv
 from ..common import get_content
 
 logger = logging.getLogger(__name__)
@@ -107,13 +106,8 @@ def fetch_subtitles(extractor, avid, cid) -> None:
     from .. import common
     cookie_str = _serialize_cookies(common.cookies)
     if not cookie_str:
-        # 用户未传 --cookies，尝试从 MediaCrawlerPro-Python 资源服务拉
-        cookie_str = fetch_cookies_from_srv("bili") or ""
-        if cookie_str:
-            logger.info("[Subtitle] 已从资源服务获取 bili cookies")
-        else:
-            logger.warning("[Subtitle] 未提供 cookies 且资源服务无可用 cookies，跳过字幕下载")
-            return
+        logger.warning("[Subtitle] 未提供 cookies（--cookies 未传 且 资源服务注入未成功），跳过字幕下载")
+        return
 
     if not is_signsrv_available():
         url = os.environ.get("SIGN_SRV_URL", DEFAULT_SIGN_SRV_URL)
