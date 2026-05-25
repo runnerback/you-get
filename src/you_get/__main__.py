@@ -4,6 +4,22 @@ import getopt
 import os
 import platform
 import sys
+
+# 优先加载 .env：APP_ENV=production 时读 .env.production，否则读 .env
+# shell 已有的环境变量优先级最高（override=False）
+try:
+    from dotenv import load_dotenv
+
+    _env_name = os.getenv("APP_ENV", "development")
+    _env_file = ".env.production" if _env_name == "production" else ".env"
+    # 项目根目录（向上 3 层：__main__.py -> you_get/ -> src/ -> 项目根）
+    _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    _env_path = os.path.join(_project_root, _env_file)
+    if os.path.exists(_env_path):
+        load_dotenv(_env_path, override=False)
+except ImportError:
+    pass  # 没装 python-dotenv 也能跑（CLI 静默降级）
+
 from .version import script_name, __version__
 from .util import git, log
 

@@ -20,14 +20,7 @@ from .util import log, term
 from .util.git import get_version
 from .util.strings import get_filename, unescape_html
 from . import json_output as json_output_
-try:
-    from .util.kuaidaili_proxy import get_kuaidaili_proxy_url, get_kuaidaili_proxy_instance
-except ImportError:
-    # 如果快代理模块导入失败，提供默认的空函数
-    def get_kuaidaili_proxy_url():
-        return None
-    def get_kuaidaili_proxy_instance():
-        return None
+from .util.proxy_srv_client import fetch_proxy_url
 
 try:
     from .util.download_timeout import (
@@ -1623,57 +1616,20 @@ def set_http_proxy(proxy):
     opener = request.build_opener(proxy_support)
     request.install_opener(opener)
 
-def set_kuaidaili_proxy():
+def set_resource_srv_proxy():
+    """从资源服务（MediaCrawlerPro-Python）拉取代理 URL 并注入到 urllib。
+
+    成功返回 True；任何失败 log.w 后返回 False（调用方降级到默认网络）。
     """
-    设置快代理IP代理
-    """
-    try:
-        proxy_url = get_kuaidaili_proxy_url()
-        if proxy_url:
-            log.i(f'[快代理] 正在使用快代理IP: {proxy_url}')
-            # 解析代理URL格式: http://username:password@ip:port
-            import re
-            match = re.match(r'http://(.+?)@(.+):(\d+)', proxy_url)
-            if match:
-                auth_part = match.group(1)
-                ip = match.group(2)
-                port = match.group(3)
-                proxy_addr = f"{ip}:{port}"
-                
-                # 设置代理
-                proxy_support = request.ProxyHandler({
-                    'http': proxy_url,
-                    'https': proxy_url
-                })
-                opener = request.build_opener(proxy_support)
-                request.install_opener(opener)
-                log.i(f'[快代理] 快代理设置成功: {proxy_addr}')
-                return True
-            else:
-                # 没有认证信息的代理格式: http://ip:port
-                match = re.match(r'http://(.+):(\d+)', proxy_url)
-                if match:
-                    ip = match.group(1)
-                    port = match.group(2)
-                    proxy_addr = f"{ip}:{port}"
-                    
-                    proxy_support = request.ProxyHandler({
-                        'http': proxy_url,
-                        'https': proxy_url
-                    })
-                    opener = request.build_opener(proxy_support)
-                    request.install_opener(opener)
-                    log.i(f'[快代理] 快代理设置成功: {proxy_addr}')
-                    return True
-                else:
-                    log.e('[快代理] 快代理URL格式错误')
-                    return False
-        else:
-            log.e('[快代理] 获取快代理IP失败')
-            return False
-    except Exception as e:
-        log.e(f'[快代理] 设置快代理时发生错误: {e}')
+    proxy_url = fetch_proxy_url()
+    if not proxy_url:
+        log.w('[Proxy] 资源服务未返回可用代理')
         return False
+    log.i(f'[Proxy] 使用资源服务代理: {proxy_url}')
+    proxy_support = request.ProxyHandler({'http': proxy_url, 'https': proxy_url})
+    opener = request.build_opener(proxy_support)
+    request.install_opener(opener)
+    return True
 
 
 def print_more_compatible(*args, **kwargs):
@@ -1987,13 +1943,17 @@ def script_main(download, download_playlist, **kwargs):
         '-s', '--socks-proxy', metavar='HOST:PORT or USERNAME:PASSWORD@HOST:PORT',
         help='Use an SOCKS5 proxy for downloading'
     )
+    # 资源服务代理：从 MediaCrawlerPro-Python 资源服务（默认 :8990）拉取代理 URL。
+    # 旧参数 --kuaidaili-proxy / --disable-kuaidaili-proxy 已废弃，统一改名为 --srv-proxy / --disable-srv-proxy
     proxy_grp.add_argument(
-        '--kuaidaili-proxy', action='store_true', default=True,
-        help='Use Kuaidaili proxy service for downloading (enabled by default)'
+        '--srv-proxy', '--kuaidaili-proxy', dest='srv_proxy',
+        action='store_true', default=True,
+        help='Use proxy from resource server (MediaCrawlerPro-Python, enabled by default)'
     )
     proxy_grp.add_argument(
-        '--disable-kuaidaili-proxy', action='store_true',
-        help='Disable Kuaidaili proxy service'
+        '--disable-srv-proxy', '--disable-kuaidaili-proxy', dest='disable_srv_proxy',
+        action='store_true',
+        help='Disable resource server proxy'
     )
 
     download_grp.add_argument(
@@ -2081,13 +2041,12 @@ def script_main(download, download_playlist, **kwargs):
 
     if args.no_proxy:
         set_http_proxy('')
-    elif args.disable_kuaidaili_proxy:
-        # 用户明确禁用快代理
+    elif args.disable_srv_proxy:
+        # 用户明确禁用资源服务代理
         set_http_proxy(args.http_proxy)
-    elif args.kuaidaili_proxy and not args.http_proxy and not args.socks_proxy:
-        # 默认使用快代理（除非用户指定了其他代理）
-        if not set_kuaidaili_proxy():
-            log.w('[快代理] 快代理设置失败，降级使用默认网络')
+    elif args.srv_proxy and not args.http_proxy and not args.socks_proxy:
+        # 默认从资源服务拉取代理；失败则降级使用默认网络
+        if not set_resource_srv_proxy():
             set_http_proxy(args.http_proxy)
     else:
         set_http_proxy(args.http_proxy)

@@ -98,3 +98,10 @@ _*
 
 .emacs*
 .vscode
+
+# 环境变量（保留 .env.example，忽略其他）
+.env
+.env.production
+.env.local
+.env.*.local
+
