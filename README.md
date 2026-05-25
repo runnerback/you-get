@@ -1,9 +1,11 @@
 # you-get（runnerback fork）
 
-- **版本**: v1.2
+- **版本**: v1.3
 - **更新时间**: 2026-05-25
 - **上游**: [soimort/you-get](https://github.com/soimort/you-get)（develop 分支）
-- **本 fork 用途**: 在原版基础上为 MediaCrawlerPro 项目增量集成快代理、字幕下载、共享资源服务等能力
+- **本 fork 用途**: 视频/音频/弹幕/字幕下载工具；签名走 SignSrv、cookies/代理走 MediaCrawlerPro-Python 资源服务
+
+> 📖 配套文档：[`CLAUDE.md`](CLAUDE.md) · [`docs/bilibili-no-merge.md`](docs/bilibili-no-merge.md) · [`.env.example`](.env.example)
 
 ## 服务架构概览
 
@@ -175,7 +177,7 @@ RESOURCE_SRV_URL=http://127.0.0.1:8990
 
 ## 五、Bilibili 音视频分流（不合并）
 
-详细见 [`docs/bilibili_no_merge_usage.md`](docs/bilibili_no_merge_usage.md)。
+详细见 [`docs/bilibili-no-merge.md`](docs/bilibili-no-merge.md)。
 
 最小命令：
 ```bash
@@ -224,9 +226,7 @@ tests/
     test_bilibili_subtitle.py  # 字幕纯函数单测
     manual_test_bili_subtitle.py  # e2e 验证脚本
 docs/
-    bilibili_no_merge_usage.md     # 音视频分流用法
-    superpowers/specs/2026-05-25-bili-subtitle-design.md   # 字幕设计 spec
-    superpowers/plans/2026-05-25-bili-subtitle.md          # 字幕实现 plan
+    bilibili-no-merge.md     # 音视频分流用法详解
 ```
 
 ---

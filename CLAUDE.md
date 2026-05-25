@@ -1,91 +1,91 @@
 # CLAUDE.md（you-get 项目级指引）
 
-- **版本**: v1.0
+- **版本**: v2.0
 - **更新时间**: 2026-05-25
 
-本文件为 Claude Code（claude.ai/code）在本仓库工作时的指引。优先级高于默认行为，低于用户的 `~/.claude/CLAUDE.md` 全局规则。
+本文件为 Claude Code 在本仓库工作时的指引。优先级低于 `~/.claude/CLAUDE.md` 全局规则，高于默认行为。
 
 ---
 
 ## 一、项目定位
 
-`you-get`（runnerback fork）是 MediaCrawlerPro 套件下的视频下载工具。本 fork 在上游 `soimort/you-get` 基础上增量集成：
-- 快代理（默认启用，硬编码兜底有问题待移除）
-- Bilibili 音视频分流（复用上游 `-n`）
-- Bilibili CC 字幕（含 AI），依赖 `MediaCrawlerPro-SignSrv` 提供 wbi 签名
+**you-get（runnerback fork）** = 视频/音频/弹幕/字幕下载工具。fork 自上游 [soimort/you-get](https://github.com/soimort/you-get)。
 
-详情见 `README.md` 与 `docs/` 下文档。
+**纯下载职责**：不维护账号池、不维护代理池、不实现签名算法 — 这些都从外部 HTTP 服务拉取（见下方架构图）。
 
----
+## 二、在 MediaCrawlerPro 体系中的位置
 
-## 二、工作流偏好
+```
+┌────────────────┐  签名         ┌────────────────┐
+│ you-get        │ ─────────────►│ SignSrv :8989  │
+│ (本项目)       │               └────────────────┘
+│                │  cookies/proxy ┌─────────────────────────┐
+│                │ ──────────────►│ MediaCrawlerPro-Python  │
+│                │                │ 资源服务 :8990          │
+└────────────────┘                └─────────────────────────┘
+```
 
-### 小需求 / 小改动：直接做，不要走 superpowers
+零配置启动流程：
+1. `cookies` 自动从资源服务 `GET /api/v1/bili/cookies` 拉
+2. 字幕签名自动从 SignSrv `POST /signsrv/v1/bilibili/sign` 拉
+3. 代理自动从资源服务 `GET /api/v1/proxy/kuaidaili` 拉
 
-**不要默认使用 superpowers**（`brainstorming` / `writing-plans` / 等）。它们对 100 行内的修改、bug fix、文档更新、问答性任务是过度工程，会让简单事变啰嗦。
+任一环节失败 → log.w 后降级或跳过 → 不阻塞视频本体下载。
 
-**判断阈值**：
-- ✅ **直接做**：~150 行内代码改动、单文件修改、bug fix、文档/配置改动、回答问题、命令使用、git 操作
-- ⚠️ **走完整流程**：多文件协调的大 feature、跨模块重构、需要多方案对比的架构决策，且**用户明确要求或我判断高风险**时
+## 三、关键命令
 
-**只有以下情况才用 superpowers**：
-1. 用户在消息里**显式**要求（"用 brainstorm"、"先出 spec"、"写 plan"）
-2. 任务**确实复杂**（>3 个文件协调 + 影响公共接口 + 决策不可逆）
-3. 用户在长对话里反复纠偏，说明思路漂移，需要正式化
+```bash
+source venv/bin/activate
 
-不确定时**问一句**："这个量级要走 spec/plan 流程吗，还是直接做？"，不要默认走。
+# 默认行为（自动拉 cookies + 自动用代理 + 自动签字幕）
+./you-get https://www.bilibili.com/video/BVxxxxxx
 
-### 编码原则
-- 遵守用户全局规则："不要写保底代码,有问题及时暴露,切记!" 
-  - 网络/外部服务失败 → log + return None（已是 you-get/SignSrv 的现行风格），但 **不要** 加重试循环、不要静默吞错、不要硬编码兜底凭证
-  - `kuaidaili_proxy.py:280-283` 就是反面例子（硬编码 secret_id 兜底，导致"看似连上代理但 IP 被 ban"的误导）
-- 中文写文档和 todo
-- 文档放 `docs/`，测试放 `tests/`
-- 新文档头部加版本号 + 更新时间
-- UTF-8 中文
+# 音视频分流（不合并）
+./you-get -n https://www.bilibili.com/video/BVxxxxxx
 
-### 测试
-- 项目用 stdlib `unittest`，不用 pytest
-- 测试文件 `tests/test_*.py`，命令：`venv/bin/python -m unittest discover tests -v`
-- 网络/外部服务相关用 `unittest.mock.patch` mock，e2e 验证写独立 `manual_test_*.py` 脚本
+# 显式禁用资源服务代理
+./you-get --disable-srv-proxy https://www.bilibili.com/video/BVxxxxxx
 
-### Git
-- 不主动操作 git。用户会自己 commit
-- 如需要写明 commit 建议，可以写在汇报里，但不要执行
+# 显式提供 cookies（覆盖资源服务）
+./you-get --cookies ~/bili_cookies.txt https://www.bilibili.com/video/BVxxxxxx
 
----
+# 单元测试
+venv/bin/python -m unittest discover tests -v
+```
 
-## 三、关键文件索引
+## 四、文档索引
 
-| 类型 | 文件 | 职责 |
-|---|---|---|
-| 入口 | `you-get`（脚本）/ `src/you_get/common.py` | CLI 参数解析、下载主流程 |
-| Extractor | `src/you_get/extractor.py` | 字幕落盘通用机制（`caption_tracks` → `{title}.{lang}.srt`） |
-| Bilibili | `src/you_get/extractors/bilibili.py` | B 站解析（3 处 cid 分支：普通 / 番剧 / festival） |
-| Bilibili 字幕 | `src/you_get/extractors/bilibili_subtitle.py` | 本 fork 新增：字幕抓取主流程 + 纯函数 |
-| SignSrv 客户端 | `src/you_get/util/signsrv_client.py` | 本 fork 新增：HTTP 调 SignSrv |
-| 快代理 | `src/you_get/util/kuaidaili_proxy.py` | 本 fork 新增：含跨进程缓存。⚠️ 有硬编码兜底待移除 |
-| 文档 | `docs/bilibili_no_merge_usage.md`, `docs/superpowers/specs/`, `docs/superpowers/plans/` | 已有文档不要无故重写 |
-
----
-
-## 四、SignSrv 联动注意事项
-
-- 本地默认地址 `http://127.0.0.1:8989`，通过 env `SIGN_SRV_URL` 覆盖
-- SignSrv 启动：`cd ../MediaCrawlerPro-SignSrv && venv/bin/python app.py`
-- 健康检查：`curl http://127.0.0.1:8989/signsrv/pong`
-- 字幕调用：`POST /signsrv/v1/bilibili/sign`，body `{req_data: {...}, cookies: "..."}`
-
-如 SignSrv venv 缺依赖（`xhshow` 等）：`venv/bin/pip install -r requirements.txt` 补装。
-
----
-
-## 五、常见操作模式
-
-| 用户说 | 做法 |
+| 文档 | 用途 |
 |---|---|
-| "实现 / 加一个 X 功能" | 体量小直接做；体量大或不确定先问 |
-| "看一下 / 分析一下 / 是否可以" | 调研类，grep + 读代码 + 简洁汇报，不要走 brainstorm |
-| "用一下 / 试一下" | 实测，命令贴出来 |
-| "git ..." | 不操作 git，给命令建议 |
-| "rebase 冲突" | 按用户规则（"本地" vs "upstream" vs 语义判断）逐个处理，记录到日志 |
+| `README.md` | 项目总览：架构、增量能力、命令、配置、依赖 |
+| `docs/bilibili-no-merge.md` | B 站音视频分流下载（`-n` 用法详解 + 产物结构） |
+| `.env.example` | 环境变量模板（`SIGN_SRV_URL`、`RESOURCE_SRV_URL`） |
+
+## 五、关键文件
+
+```
+src/you_get/util/
+    signsrv_client.py          # 调 SignSrv 拿 wbi 签名
+    cookies_srv_client.py      # 调资源服务拿 cookies
+    proxy_srv_client.py        # 调资源服务拿代理 URL
+src/you_get/extractors/
+    bilibili.py                # B 站解析（上游）+ 3 处调字幕模块
+    bilibili_subtitle.py       # 字幕抓取主流程（本 fork 新增）
+tests/
+    test_signsrv_client.py     # SignSrv 客户端单测
+    test_bilibili_subtitle.py  # 字幕纯函数单测
+    manual_test_bili_subtitle.py  # e2e 验证脚本
+```
+
+## 六、工作流偏好
+
+- **不操作 git** — 用户自己 commit
+- **不主动用 superpowers** — 小改动直接做
+- **不写保底代码** — 服务不可达 / 凭证缺失 → log.w + 跳过，**不**写硬编码默认值兜底
+- **新文档命名** kebab-case，加版本号 + 更新时间
+
+## 七、不在本项目范围
+
+- 签名算法 → `MediaCrawlerPro-SignSrv`
+- cookies / 代理管理 → `MediaCrawlerPro-Python` 资源服务
+- 视频元数据爬取 / 入库 → `MediaCrawlerPro-Python` CLI 爬虫
