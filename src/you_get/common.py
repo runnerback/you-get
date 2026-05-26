@@ -1617,19 +1617,54 @@ def set_http_proxy(proxy):
     request.install_opener(opener)
 
 def set_resource_srv_proxy():
-    """从资源服务（MediaCrawlerPro-Python）拉取代理 URL 并注入到 urllib。
+    """从资源服务（MediaCrawlerPro-Python）拉取代理 URL，验证可达 B 站后注入 urllib。
 
-    成功返回 True；任何失败 log.w 后返回 False（调用方降级到默认网络）。
+    返回 True 表示已设置代理；False 表示降级到默认网络（包括"拉不到代理"和"代理被 B 站拒"两种情况）。
     """
     proxy_url = fetch_proxy_url()
     if not proxy_url:
         log.w('[Proxy] 资源服务未返回可用代理')
+        return False
+    # 主动验证：拿这个代理 ping 一下 B 站，不通则降级直连（避免后续下载阶段才失败）
+    if not _verify_proxy_against_bilibili(proxy_url, timeout=5):
+        log.w(f'[Proxy] B 站拒绝代理 {proxy_url}，降级直连')
         return False
     log.i(f'[Proxy] 使用资源服务代理: {proxy_url}')
     proxy_support = request.ProxyHandler({'http': proxy_url, 'https': proxy_url})
     opener = request.build_opener(proxy_support)
     request.install_opener(opener)
     return True
+
+
+def _verify_proxy_against_bilibili(proxy_url, timeout=5):
+    """用给定代理走 you-get 同款 urllib 路径访问 B 站，**完整读完响应**才算通过。
+
+    为什么要完整读：实测发现 Python urllib + 代理 + B 站 HTTPS 这个组合会出现
+    chunked 响应中途断开（IncompleteRead），表现为下载阶段失败。所以验证函数必须
+    复现这条路径，提前发现问题并降级直连。
+
+    （注意：curl + 同代理 + 同 URL 是 200 + 完整页面，说明代理和 IP 本身被 B 站接受，
+    是 urllib 的 chunked/keep-alive 处理与 B 站 CDN 不兼容。）
+    """
+    try:
+        handler = request.ProxyHandler({'http': proxy_url, 'https': proxy_url})
+        opener = request.build_opener(handler)
+        req = request.Request(
+            'https://www.bilibili.com/',
+            headers={
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+                              'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml',
+            },
+        )
+        with opener.open(req, timeout=timeout) as resp:
+            if resp.status != 200:
+                return False
+            _ = resp.read()  # 强制读完，复现真实下载路径
+            return True
+    except Exception as e:
+        log.w(f'[Proxy] 代理验证失败（urllib 与 B 站 CDN 兼容性问题）: {type(e).__name__}')
+        return False
 
 
 def print_more_compatible(*args, **kwargs):
@@ -1944,16 +1979,20 @@ def script_main(download, download_playlist, **kwargs):
         help='Use an SOCKS5 proxy for downloading'
     )
     # 资源服务代理：从 MediaCrawlerPro-Python 资源服务（默认 :8990）拉取代理 URL。
+    # 默认行为由 .env 的 USE_SRV_PROXY 决定（true / 1 / yes / on → 启用；其他 → 禁用）；
+    # 未设 env 时默认 False（避免本地 you-get 浪费 KDL 额度，urllib + 代理与 B 站 CDN 不兼容）。
     # 旧参数 --kuaidaili-proxy / --disable-kuaidaili-proxy 已废弃，统一改名为 --srv-proxy / --disable-srv-proxy
+    _srv_proxy_default = os.environ.get('USE_SRV_PROXY', '').strip().lower() in ('true', '1', 'yes', 'on')
     proxy_grp.add_argument(
         '--srv-proxy', '--kuaidaili-proxy', dest='srv_proxy',
-        action='store_true', default=True,
-        help='Use proxy from resource server (MediaCrawlerPro-Python, enabled by default)'
+        action='store_true', default=_srv_proxy_default,
+        help='Use proxy from resource server (MediaCrawlerPro-Python). '
+             'Default from .env USE_SRV_PROXY (currently: {})'.format(_srv_proxy_default)
     )
     proxy_grp.add_argument(
         '--disable-srv-proxy', '--disable-kuaidaili-proxy', dest='disable_srv_proxy',
         action='store_true',
-        help='Disable resource server proxy'
+        help='Disable resource server proxy (overrides .env USE_SRV_PROXY)'
     )
 
     download_grp.add_argument(
