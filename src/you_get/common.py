@@ -157,6 +157,13 @@ auto_rename = False
 insecure = False
 m3u8 = False
 postfix = False
+
+# url_size 探测大小时的单请求超时（秒）。避免对卡死的 CDN / P2P-CDN 节点（如 B 站
+# *.mcdn.bilivideo.cn:8082）的 TLS 握手无限死等——曾导致 you-get -i 探测整体卡满外层 30s → 任务失败。
+_URL_SIZE_TIMEOUT = float(os.environ.get('YOUGET_URL_SIZE_TIMEOUT', '8'))
+# 全局 HTTP 兜底超时（秒）。设置 YOUGET_HTTP_TIMEOUT 时给所有未显式传 timeout 的请求（如视频页抓取）
+# 加 socket 超时，防 TLS 握手在异常网络下无限死等。默认 None = 不改上游行为。
+_HTTP_DEFAULT_TIMEOUT = (lambda v: float(v) if v else None)(os.environ.get('YOUGET_HTTP_TIMEOUT'))
 prefix = None
 
 fake_headers = {
@@ -445,7 +452,11 @@ def get_location(url, headers=None, get_method='HEAD'):
 
 
 def urlopen_with_retry(*args, **kwargs):
-    retry_time = 3
+    # retry_time 可由调用方覆盖（如 url_size 探测传 1）：对卡死的 host 不多次重试，避免拖满探测超时
+    retry_time = kwargs.pop('retry_time', 3)
+    # 兜底超时：YOUGET_HTTP_TIMEOUT 设置时给未显式传 timeout 的请求加 socket 超时（防 TLS 握手死等）
+    if _HTTP_DEFAULT_TIMEOUT is not None:
+        kwargs.setdefault('timeout', _HTTP_DEFAULT_TIMEOUT)
     for i in range(retry_time):
         try:
             if insecure:
@@ -574,15 +585,24 @@ def post_content(url, headers={}, post_data={}, decoded=True, **kwargs):
     return data
 
 
-def url_size(url, faker=False, headers={}):
+def url_size(url, faker=False, headers={}, timeout=None):
+    # 探测场景（you-get -i）跳过逐流真实大小请求：YOUGET_SKIP_URL_SIZE=1 时直接返回 inf（不发网络）。
+    # 一个视频有十几条流且常共用同一 CDN host，逐条 size 请求一旦撞上卡死的 P2P-CDN 节点
+    # （*.mcdn.bilivideo.cn:8082）会累加把 -i 拖满 30s。-i 只需 format 列表，size 未知(inf)不影响。
+    if os.environ.get('YOUGET_SKIP_URL_SIZE', '').strip().lower() in ('1', 'true', 'yes', 'on'):
+        return float('inf')
+    # 单请求超时 + 不重试（retry_time=1）：未跳过时也避免对卡死节点 TLS 握手无限死等。
+    # 超时/失败按既有语义抛出 socket.timeout；上层 bilibili.url_size 包装会 catch 成 err_value=0。
+    if timeout is None:
+        timeout = _URL_SIZE_TIMEOUT
     if faker:
         response = urlopen_with_retry(
-            request.Request(url, headers=fake_headers)
+            request.Request(url, headers=fake_headers), timeout=timeout, retry_time=1
         )
     elif headers:
-        response = urlopen_with_retry(request.Request(url, headers=headers))
+        response = urlopen_with_retry(request.Request(url, headers=headers), timeout=timeout, retry_time=1)
     else:
-        response = urlopen_with_retry(url)
+        response = urlopen_with_retry(url, timeout=timeout, retry_time=1)
 
     size = response.headers['content-length']
     return int(size) if size is not None else float('inf')
