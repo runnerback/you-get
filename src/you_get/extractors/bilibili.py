@@ -9,6 +9,19 @@ import hashlib
 import math
 
 
+def _loads_initial_state(text):
+    """安全解析 B 站页面的 __INITIAL_STATE__。
+
+    抓到异常页面（无该字段，常见于网络抖动 / 反爬返回的非正常页面）时，给一个清晰、可重试的
+    错误，而不是崩在 json.loads(None) 的 TypeError——后者会报到看不懂的解析行，误导成"解析器坏了"。
+    """
+    if not text:
+        raise AssertionError(
+            'B 站页面缺少 __INITIAL_STATE__：疑似反爬或网络异常返回了非正常页面（非视频问题，可重试）'
+        )
+    return json.loads(text)
+
+
 class Bilibili(VideoExtractor):
     name = "Bilibili"
 
@@ -180,7 +193,7 @@ class Bilibili(VideoExtractor):
         elif re.match(r'https?://(www\.)?bilibili\.com/bangumi/play/ss(\d+)', self.url) or \
              re.match(r'https?://bangumi\.bilibili\.com/anime/(\d+)/play', self.url):
             initial_state_text = match1(html_content, r'__INITIAL_STATE__=(.*?);\(function\(\)')  # FIXME
-            initial_state = json.loads(initial_state_text)
+            initial_state = _loads_initial_state(initial_state_text)
             ep_id = initial_state['epList'][0]['id']
             self.url = 'https://www.bilibili.com/bangumi/play/ep%s' % ep_id
             html_content = get_content(self.url, headers=self.bilibili_headers(referer=self.url))
@@ -217,7 +230,7 @@ class Bilibili(VideoExtractor):
         # regular video
         if sort == 'video':
             initial_state_text = match1(html_content, r'__INITIAL_STATE__=(.*?);\(function\(\)')  # FIXME
-            initial_state = json.loads(initial_state_text)
+            initial_state = _loads_initial_state(initial_state_text)
 
             playinfo_text = match1(html_content, r'__playinfo__=(.*?)</script><script>')  # FIXME
             playinfo = json.loads(playinfo_text) if playinfo_text else None
@@ -349,7 +362,7 @@ class Bilibili(VideoExtractor):
         # bangumi
         elif sort == 'bangumi':
             initial_state_text = match1(html_content, r'__INITIAL_STATE__=(.*?);\(function\(\)')  # FIXME
-            initial_state = json.loads(initial_state_text)
+            initial_state = _loads_initial_state(initial_state_text)
 
             # warn if this bangumi has more than 1 video
             epn = len(initial_state['epList'])
@@ -666,7 +679,7 @@ class Bilibili(VideoExtractor):
         # regular video
         if sort == 'video':
             initial_state_text = match1(html_content, r'__INITIAL_STATE__=(.*?);\(function\(\)')  # FIXME
-            initial_state = json.loads(initial_state_text)
+            initial_state = _loads_initial_state(initial_state_text)
             aid = initial_state['videoData']['aid']
             pn = initial_state['videoData']['videos']
 
@@ -731,7 +744,7 @@ class Bilibili(VideoExtractor):
 
         elif sort == 'bangumi':
             initial_state_text = match1(html_content, r'__INITIAL_STATE__=(.*?);\(function\(\)')  # FIXME
-            initial_state = json.loads(initial_state_text)
+            initial_state = _loads_initial_state(initial_state_text)
             epn, i = len(initial_state['epList']), 0
             for ep in initial_state['epList']:
                 i += 1; log.w('Extracting %s of %s videos ...' % (i, epn))
@@ -741,7 +754,7 @@ class Bilibili(VideoExtractor):
 
         elif sort == 'bangumi_md':
             initial_state_text = match1(html_content, r'__INITIAL_STATE__=(.*?);\(function\(\)')  # FIXME
-            initial_state = json.loads(initial_state_text)
+            initial_state = _loads_initial_state(initial_state_text)
             epn, i = len(initial_state['mediaInfo']['episodes']), 0
             for ep in initial_state['mediaInfo']['episodes']:
                 i += 1; log.w('Extracting %s of %s videos ...' % (i, epn))
